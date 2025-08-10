@@ -1,2 +1,8 @@
-# sex-determination
-Graduate project predicting sex for skeletal remains using statistical methods
+# Sex Determination of Skeletal Remains
+
+
+## Introduction
+This repository contains the final report and R Markdown for a final project in a Statistical Methods graduate course. This project was done in consultation with another graduate student for their Master's thesis. Skeletal remains from a cemetery were dug up using construction equipment and mishandled, resulting in destruction of features commonly used to identify sex. These remains were sent to the TAMUCC Forensics department for further study and the task of identifying sex was given. The data was provided by 
+
+## Summary
+The data set contains 28 decedents in total; 14 known female, 7 known male, and 7 unknown sex. A total of 6 measurements were taken for each of the 12 thoracic vertebrae of each decedent, with 1 decedent missing 1 vertebrae and a couple others missing 1 or 2 measurements. The methodology used includes Two-way MANOVA, Principal Components Analysis, data imputation, Linear Discriminant Analysis (LDA), Quadratic Discriminant Analysis (QDA), Logistic Regression, and step-wise regression. Tests for normality, multivariate normality, and Box-M tests were performed to check assumptions for model selection. Confusion matrices along with residual checks and the aforementioned tests are used to discuss model performance. Two final models were suggested for potential future cases; one using two principal components as predictors in LDA in the case where all thoracic vetebrae measurements are available from a decedent and another model using step-wise multiple logistic regression with BIC as the comparison metric was found to perform best when thoracic vertebrae measurements are missing. Both final models predicted that 4 of the unknown individuals were female and 3 were male.
