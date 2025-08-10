@@ -1,0 +1,516 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+Jacob Harris
+
+```{r Libraries,message=FALSE,warning=FALSE,echo=FALSE,comment=''}
+library(readxl)
+library(tidyverse)
+library(MVN)
+library(GGally)
+library(biotools)
+library(softImpute)
+```
+
+```{r Data,echo=FALSE,warning=FALSE,message=FALSE,comment=''}
+Known <- read_excel("~/Desktop/Grad School/StatisticalMethods/FuentesData.xlsx",
+                    sheet = "Known", col_names = TRUE)
+Known$Sex <- as.factor(Known$Sex)
+Known$Vertebrae <- as.factor(Known$Vertebrae)
+Known$Individual <- as.factor(Known$Individual)
+Unknown <- read_excel("~/Desktop/Grad School/StatisticalMethods/FuentesData.xlsx",
+                      sheet = "Unknown", col_names = TRUE)
+Unknown$Vertebrae <- as.factor(Unknown$Vertebrae)
+Unknown$Individual <- as.factor(Unknown$Individual)
+indiv <- read_excel("~/Desktop/Grad School/StatisticalMethods/Individuals.xlsx",
+                    col_names = TRUE)
+indiv$Sex <- as.factor(indiv$Sex)
+indiv$Individual <- as.factor(indiv$Individual)
+colnames(indiv) <- make.names(colnames(indiv),unique = TRUE)
+NAs <- complete.cases(Known)
+na.known <- Known[NAs,]
+```
+
+# Sex Determination from Skeletal Remains
+
+## Abstract
+
+|       Measurements of thoracic vertebrae from 28 skeletons were taken and used to determine the sex of 7 unknown individuals. Using data imputation, principal components analysis, and models such as logistic regression, linear discriminant analysis, and quadratic discriminant analysis, the sex of the individuals is predicted to be either male or female. After using the stated methodology, 4 of the skeletons were considered to be female and 3 were considered to be male. 
+
+## Introduction
+
+|       This project comes from a fellow graduate student at Texas A&M - Corpus Christi, Leah Fuentes. Near Waco, numerous skeletons were dug up using machinery, which led to the mistreatment of many individual remains. These remains were sent to the forensic science department for study. As a result of the mishandling, the sex of several of these individual remains were unidentified and needed further analysis. In this project, data from 28 individuals are used, with only 21 identified as male or female and 7 remaining as unknown. From the known sample, 14 were found to be female and 7 were found to be male. 
+
+|       Using 6 measurements taken from the thoracic vertebrae, predictions for sex were made. Thoracic vertebrae are found along the base of the neck to the bottom of the ribs [1]. These vertebrae have the least flexion/extension ability of the spine [2]. Some of the functions of thoracic vertebrae include protecting the spinal cord, providing attachment for ribs, and support of the chest and abdomen [3].
+
+![Thoracic Vertebrae Measurements](Vertebra.jpg){#Vertebra .class width=50% height=50%}
+
+|       The picture above shows the measurements taken for each vertebra. Each measurement is in mm. The skeletons used in this project had all 12 thoracic vertebrae intact, with the exception of one skeleton missing one single vertebra.
+
+## Methodology
+
+|       The first task in this project involved using MANOVA to determine if there are differences of the 6 measurements among the two sexes and twelve vertebrae. Once done, data imputation was used to replace missing values followed by principal component analysis. The first two components resulting from PCA were used as predictors in a multiple logistic regression, linear discriminant analysis, and quadratic discriminant analysis.
+
+## Data
+
+|       The data was provided by Leah Fuentes, another graduate student whose project this data comes from. The 6 different measurements for 12 vertebrae for 28 individuals gives a total of 2016 different measurements taken. In this project, the data is structured multiple ways. In order to perform a MANOVA, the following data was used;
+
+```{r Data Preview 1,message=FALSE,warning=FALSE,comment=''}
+head(Known)
+```
+
+|       This data has each of the 12 vertebrae as individual records. This allows a two-way MANOVA to use Sex and Vertebrae as factors. In order to make predictions, a single entry for each individual was needed. The following data is what is used in making predictions;
+
+```{r Data Preview 2,message=FALSE,warning=FALSE,comment=''}
+head(indiv)
+```
+
+|       The first 7 rows contain individuals with unknown Sex. This data frame shows the 72 different types of measurement taken, 6 measurements for 12 vertebrae. As a result, the number of predictors (72) is much greater than the sample size (21 known, 28 total).
+
+## Analysis
+
+|       The following libraries are used in the analysis of the given data.
+
+```{r Libraries 2,eval=FALSE,comment=''}
+library(readxl)
+library(tidyverse)
+library(MVN)
+library(GGally)
+library(biotools)
+library(softImpute)
+```
+
+### MANOVA
+
+|       The first MANOVA is set up by the following equation;
+
+$$Y_{ijk} = \beta + \alpha_i + \gamma_j + (\alpha\gamma)_{ij} + \epsilon_{ijk}$$
+
+where $\alpha_i$ is the term associated with either male or female, $\gamma_j$ corresponds to one of the 12 vertebrae, and $\epsilon_{ijk}$ is the error for the $k$-th measurement. The term $\alpha\gamma_{ij}$ represents an interaction between Sex and Vertebrae. The response $Y_{ijk}$ is a vector of the different measurements taken for each vertebrae for an individual. The following table shows the results of the MANOVA.
+
+```{r MANOVA 1,message=FALSE,warning=FALSE,comment=''}
+man.fit <- manova(cbind(Horizontal,Vertical,lTPlength,
+                        lTPwidth,rTPlength,rTPwidth)~Sex*Vertebrae,data=Known)
+summary(man.fit, test = 'Wilks')
+```
+
+|       From the table above, we can see the interaction term is not significant. This would lead to a second MANOVA with the following equation
+
+$$Y_{ijk} = \beta + \alpha_i + \gamma_j + \epsilon_{ijk}$$
+
+The MANOVA from this equation omits the interaction from before. The table below shows the output from the subsequent MANOVA.
+
+```{r MANOVA 2,message=FALSE,warning=FALSE,comment=''}
+man.fit2 <- manova(cbind(Horizontal,Vertical,lTPlength,
+                        lTPwidth,rTPlength,rTPwidth)~Sex+Vertebrae,data=Known)
+summary(man.fit2, test = 'Wilks')
+```
+
+|       From both MANOVA tables, Sex and Vertebrae are found to be significant in relation to the measurements taken from each vertebrae. Post-hoc tests were not run to determine which vertebrae were found to be different.
+
+### PCA
+
+|       In order to run PCA, data imputation was used to fill in missing values in the 28 row, 74 column data set. The imputation was done using the 'softImpute' package as shown below. The code below also performs the principal component analysis
+
+```{r Data Imputation,message=FALSE,warning=FALSE,comment=''}
+set.seed(1335)
+imp <- softImpute(as.matrix(indiv[-c(1,2)]))
+indiv.comp <- as.data.frame(complete(as.matrix(indiv[-c(1,2)]),imp))
+indiv.comp$Sex <- indiv$Sex
+indiv.comp$Individual <- indiv$Individual
+pc.out <- prcomp(indiv.comp[-c(73,74)],scale. = TRUE)
+pca.comp <- data.frame(pc.out$x)
+pca.comp$Sex <- indiv$Sex
+pca.comp$Individual <- indiv$Individual
+pve <- pc.out$sdev^2 / sum(pc.out$sdev^2)
+```
+
+|       The plot shows the variances explained by each principal component.
+
+```{r Scree Plot,message=FALSE,warning=FALSE,fig.align='center',out.width="75%",comment=''}
+plot(pve,type = 'b', main = 'Proportion of Variance Explained',
+     xlab = 'Component', ylab = 'PVE')
+```
+
+|       From the scree plot above, the first 3 to 5 components could reasonably be used in models to predict Sex. In the following models, only the first 2 components are used. As a result of PCA, 72 predictors is reduced to only 2. The first component explains `r round(pve[1],2)*100`% of the variance in the data used in PCA. Combining the first two components gives `r 100*round(pve[1]+pve[2],2)`% of the variance.
+
+|       We can also look at the coefficients of the first two principal components to see what variables influence them. To do so, we can look at the greatest absolute values in each loading.
+
+```{r PCA Loadings,message=FALSE,warning=FALSE,comment=''}
+sort(abs(pc.out$rotation[,1]),decreasing = T)[1:10]
+```
+
+|       The code output above shows the magnitude of each coefficient for the 10 largest absolute values in the first principal component. These variables are the most important in calculating the first principal component. As seen above, most of these variables correspond to TP Width measurements for different vertebrae.
+
+```{r PCA Loadings 2,message=FALSE,warning=FALSE,comment=''}
+sort(abs(pc.out$rotation[,2]),decreasing = T)[1:10]
+```
+
+|       The code output above looks at the 10 largest absolute values for calculating the second principal component. The second principal component uses mainly Vertical and some TP Width measurements in creating the second component.
+
+### Logistic Regression
+
+|       The first model used to predict Sex is a multiple logistic regression with the first 2 components from PCA. Originally the first 3 were used, but the model was found to be unstable. The following code shows the model creation and summary.
+
+```{r Logistic Regression,warning=FALSE,comment=''}
+log.fit.pca <- glm(Sex~PC1+PC2, data = pca.comp,family = 'binomial')
+log.pred <- rep('F',28)
+log.pred[predict(log.fit.pca,newdata = pca.comp[c(1,2)], type = 'response')>0.5] <- 'M'
+log.pred <- data.frame(Individual <- pca.comp$Individual,
+                       Prediction <- log.pred)
+summary(log.fit.pca)
+```
+
+|       The following plot shows residuals and leverage points for the logistic regression above.
+
+```{r Logistic Residuals,message=FALSE,warning=FALSE,out.height="75%",fig.align='center',comment=''}
+par(mfrow=c(2,2))
+plot(log.fit.pca)
+```
+
+|       We can see point 27 is a large residual and considered to be a high leverage point. This model could also be considered unstable, as points 8-21 are Female, point 11 and all points to the left in the top-left plot, and 22-28 are Male, point 27 and all points to the right in the top-left plot. The top-right plot shows a Q-Q residual plot comparing the residuals from the model to a Normal sample. The only point in this plot that causes concern would be point 27. The bottom-right graph shows leverage points for the logistic regression model. Point 27 is seen to have the highest leverage among all points.
+
+```{r Logistic Confusion,comment=''}
+table(log.pred[8:28,]$Prediction....log.pred,pca.comp[8:28,]$Sex,
+      dnn = c('Predicted','Observed'))
+```
+
+|       As we can see from the confusion matrix, there is no error in predicting the known individuals.
+
+### LDA
+
+|       The next model used is a linear discriminant analysis. We can check the assumptions that the two principal components come from a multivariate normal distribution with a shared covariance matrix. The following results show the tests for multivariate Normality.
+
+```{r MVN 1,out.width="75%",fig.align='center',comment=''}
+mvn(pca.comp[8:21,1:2],
+    multivariatePlot = 'qq',mvnTest = 'mardia', univariateTest = 'SW')
+```
+
+|       The output above shows the test performed for the known Female individuals. From a Mardia test for multinormality, we see the sample is considered to be from a multivariate normal distribution and the Q-Q plot seems to agree with only one obvious outlier. The Shapiro-Wilk tests for Normality also show each principal component seems to come from a Normal distribution as well.
+
+```{r MVN 2,out.width="75%",fig.align='center',comment=''}
+mvn(pca.comp[22:28,1:2],
+    multivariatePlot = 'qq',mvnTest = 'mardia',univariateTest = 'SW')
+```
+
+|       The output above shows the same test performed for known Male individuals. Due to the small sample size, the Q-Q plot is beneficial in showing the sample seems to be a multivariate Normal sample. The next assumption to check is the shared covariance, which is tested with a Box M test.
+
+```{r Box M,comment=''}
+boxM(pca.comp[8:28,1:2],grouping = pca.comp[8:28,]$Sex)
+```
+
+|       In the Box M test, the null hypothesis is that the two groups have the same covariance matrices. Due to the p-value above, we fail to reject the null at the $\alpha=0.05$ significance level and consider the covariances as shared. Both this test and the multivariate tests above show that the assumptions for Linear Discriminant Analysis are met. The next output shows a LDA model.
+
+```{r LDA 1,comment=''}
+lda.fit <- lda(Sex~PC1+PC2,data = pca.comp)
+lda.pred <- predict(lda.fit,newdata = pca.comp[c(1,2)])
+lda.pred <- data.frame(Individual <- pca.comp$Individual,
+                       Prediction <- lda.pred)
+lda.fit
+```
+
+|       The first LDA uses the sample proportion of Male and Female as the prior. The following plot shows the discriminant calculated for each group.
+
+```{r Plot LDA 1,fig.align='center',out.width="75%",comment=''}
+plot(lda.fit)
+```
+
+|       This plot shows the calculated discriminants for the LDA model for observations in each group. From this graph, we can see some overlap between the two groups. This is seen in the confusion matrix as well, as there is some error in predicting the known individuals.
+
+```{r LDA Confusion 1,comment=''}
+table(lda.pred[8:28,]$class,pca.comp[8:28,]$Sex,
+      dnn = c('Predicted','Observed'))
+```
+
+|       This model incorrectly predicts only 1 male and correctly identifies all females. Another LDA could be fit using priors with equal probability. The following model below shows the effects of this change.
+
+```{r LDA 2,comment=''}
+lda.fit2 <- lda(Sex~PC1+PC2,data = pca.comp, prior=c(.5,.5))
+lda.pred2 <- predict(lda.fit2,newdata = pca.comp[c(1,2)])
+lda.pred2 <- data.frame(Individual <- pca.comp$Individual,
+                       Prediction <- lda.pred2)
+lda.fit2
+```
+
+|       The following plot shows little difference in the discriminant value between the two models.
+
+```{r Plot LDA 2,fig.align='center',out.width="75%",comment=''}
+plot(lda.fit2)
+```
+
+|       The biggest difference is in the confusion matrix. As seen below, the equal prior model performs worse than the first LDA.
+
+```{r LDA Confusion 2,comment=''}
+table(lda.pred2[8:28,]$class,pca.comp[8:28,]$Sex,
+      dnn = c('Predicted','Observed'))
+```
+
+|       Both LDA models predict the same sex for the unknown individuals, but perform differently for the known individuals. There is no known reason for the difference in number of known male and female individuals, so an equal prior probability is not unreasonable.
+
+### QDA
+
+|       Even though the covariances between the two sexes are considered to be similar, a quadratic discriminant analysis can still be run. The following shows such a model.
+
+```{r QDA 1,comment=''}
+qda.fit <- qda(Sex~PC1+PC2,data = pca.comp)
+qda.pred <- predict(qda.fit,newdata = pca.comp[c(1,2)])
+qda.pred <- data.frame(Individual <- pca.comp$Individual,
+                       Predicted <- qda.pred)
+qda.fit
+```
+
+|       Similar to the LDA models, the first model uses the sample proportion as the prior probabilities of male and female. The confusion matrix is shown below.
+
+```{r QDA Confusion 1,comment=''}
+table(qda.pred[8:28,]$class,pca.comp[8:28,]$Sex,
+      dnn = c('Predicted','Observed'))
+```
+
+|       This model performs the same as the first LDA, only one male is misclassified as female. Another QDA using equal prior probabilities is shown below.
+
+```{r QDA 2,comment=''}
+qda.fit2 <- qda(Sex~PC1+PC2,data = pca.comp, prior = c(0.5,0.5))
+qda.pred2 <- predict(qda.fit2,newdata = pca.comp[c(1,2)])
+qda.pred2 <- data.frame(Individual <- pca.comp$Individual,
+                       Predicted <- qda.pred2)
+qda.fit2
+```
+
+|       Similar to before, the confusion matrix is shown below.
+
+```{r QDA Confusion 2,comment=''}
+table(qda.pred2[8:28,]$class,pca.comp[8:28,]$Sex,
+      dnn = c('Predicted','Observed'))
+```
+
+|       Just as before, changing the prior probabilities affects the performance of predicting the known individuals. However, the prediction of the unknown individuals remains the same.
+
+## Models with PCA Results
+
+|       The following table shows the predictions of the multiple logistic regression, LDAs, and QDAs.
+
+```{r Result Table,echo=FALSE,out.height="75%",comment=''}
+unknown.pred <- data.frame(Individual = pca.comp[1:7,]$Individual,
+                           Logistic.Prediction = log.pred[1:7,]$Prediction....log.pred,
+                           LDA.Prediction = lda.pred[1:7,]$class,
+                           QDA.Prediction = qda.pred[1:7,]$class)
+unknown.pred
+```
+
+|       All models are in agreement that out of the unknown, 4 are Female (MB 81, MB 125, MB 130, MB 151) and 3 are Male (MB 47, MB 49, MB 65). Changing the prior probabilities for the LDA and QDA models did not affect the final prediction of the individuals, although the predicted probabilities did shift slightly. Further analysis may look into the arguments for or against the different priors of both models.
+
+## Further Analysis
+
+|       One negative aspect of using PCA is the lack of interpretability in using models. To account for that, backwards step-wise model selection is used to create a logistic regression. The variables used in that model are then used in LDA and QDA models as well. In order to avoid PCA, only variables with complete data are available for selection.
+
+### Backward Model Selection
+
+|       The backwards step-wise model selection uses Bayesian Information Criterion (BIC) to compare models. The end model will have the lowest BIC out of the models proposed.
+
+```{r Backward,message=FALSE,warning=FALSE,comment=''}
+t.comp <- complete.cases(t(indiv))
+comp.indiv <- cbind(indiv[,1],indiv[,t.comp])
+# step wise logistic regression
+full.log <- glm(Sex~.,data = comp.indiv[,-2], family = 'binomial')
+# k = log(nrow()) - BIC
+step.log <- step(full.log,scope = formula(Sex~0),
+                 direction = 'backward',k = log(nrow(comp.indiv)),trace = 0)
+summary(step.log)
+```
+
+|       From the output above, we can see the model uses T2 Horizontal, T11 Left TP Length, T5 Left TP Length, and T10 Left TP Width measurements as predictors. We can get a residual plot as before.
+
+```{r Plot Step Log,message=FALSE,warning=FALSE,out.height="75%",fig.align='center',comment=''}
+par(mfrow=c(2,2))
+plot(step.log)
+```
+
+|       Same as the logistic regression model from before, point 27 is a high leverage point and considered to be a larger residual. The top-right plot also shows the residuals deviate from Normality more than before. We also see two more high leverage points in the bottom-right plot, points 14 and 17.
+
+```{r Back Log Confusion,message=FALSE,warning=FALSE,comment=''}
+step.pred <- rep('F',28)
+step.pred[predict(step.log, newdata = indiv,type = 'response')>0.5] <- 'M'
+table(step.pred[8:28],indiv$Sex[8:28],
+      dnn = c('Predicted','Observed'))
+```
+
+|       Despite the new suspect points from the residual and leverage point plots, the model still is able to retroactively predict the sex for each individual.
+
+### LDA
+
+|       We can check the assumptions for LDA and QDA again. LDA assumes a shared covariance matrix for predictors regardless of sex, while QDA assumes each sex has a different covariance matrix for predictors. Both assume the sample is taken from a multivariate normal distribution.
+
+```{r Back MVN1,message=FALSE,warning=FALSE,comment=''}
+stepVars <- labels(terms(step.log))
+mvn(comp.indiv[8:21,stepVars], mvnTest = 'mardia',
+    univariateTest = 'SW', multivariatePlot = 'qq')
+```
+
+|       From the Mardia test above, we can consider the female sample to come from a multivariate normal distribution. The Q-Q plot also shows that the sample seems to follow multivariate normality.
+
+```{r Back MVN 2,message=FALSE,warning=FALSE,comment=''}
+mvn(comp.indiv[22:28,stepVars], mvnTest = 'mardia',
+    univariateTest = 'SW', multivariatePlot = 'qq')
+```
+
+|       The male sample is also considered to be from a multivariate normal distribution. Despite a smaller sample size, we can look at the Q-Q plot and see small deviations from a multivariate normal distribution.
+
+|       The next test is a Box M test for homogeneity of covariances. The following code shows such a test being performed.
+
+```{r Back Box M,message=FALSE,warning=FALSE,comment=''}
+boxM(comp.indiv[8:28,stepVars],grouping = comp.indiv[8:28,]$Sex)
+```
+
+|       From the test above, we fail to reject the null hypothesis that the covariance matrices are the same at the $\alpha=0.05$ level. This leads to this data satisfying the assumptions for LDA and breaking the assumption of different covariances for sexes required for QDA
+
+|       The following LDA model uses sample proportions as priors. 
+
+```{r Back LDA,message=FALSE,warning=FALSE,comment=''}
+lda.step <- lda(formula(step.log),data = comp.indiv)
+lda.step
+```
+
+|       We can also plot the discriminant values for each observation in each group.
+
+```{r Plot Back LDA,message=FALSE,warning=FALSE,fig.align='center',out.height="75%",comment=''}
+plot(lda.step)
+```
+
+|       The plot above shows a small overlap in discriminant values for each group. We can look at the confusion matrix below to see how well the model predicts known observations.
+
+```{r Back LDA Pred,message=FALSE,warning=FALSE,comment=''}
+lda.step.pred <- predict(lda.step,newdata = comp.indiv)
+table(lda.step.pred$class[8:28],comp.indiv[8:28,]$Sex,
+      dnn = c('Predicted','Observed'))
+```
+
+|       This LDA model misclassifies one female as male, a slight reversal from before where a male would be classified as female.
+
+## Results
+
+|       Using the previous two models, the following predictions for the unknown individuals are made.
+
+```{r Back Predictions,message=FALSE,warning=FALSE,comment=''}
+unknown.pred2 <- data.frame(Individual = pca.comp[1:7,]$Individual,
+                           Step.Log.Pred = step.pred[1:7],
+                           Step.LDA.Pred = lda.step.pred$class[1:7])
+unknown.pred2
+```
+
+|       From the table above, the LDA model using the variables selected in the backwards step wise logistic regression has the same predictions as the models using principal components analysis. This model is getting the same results only using 4 measurements rather than all 72 used for the PCA models.
+
+## Limitations
+
+|       The study looks only at adult skeletons, with no adjustment for age of the individual. Data for specific vertebrae were also missing, leading to some measurements not being included as possible selections for backwards step-wise variable selection. The test accuracy of the models used may be affected due to the small sample sizes taken. A look into LOOCV may provide more insight into the accuracy of predictions.
+
+## Conclusion
+
+|       The models used in this project predict that of the 7 skeletons for which sex was unknown, 4 are female (MB 81, MB 125, MB 130, MB 151) and 3 are male (MB 47, MB 49, MB 65). In order to use all measurements taken, Principal Component Analysis was performed with data imputation in order to replace missing values. The first 2 principal components were used as predictors and after checking the performance of a multiple logistic along with the model assumptions for Linear Discriminant Analysis and Quadratic Discriminant analysis, the LDA model using the first two principal components was determined to be most useful for predicting sex of unknown skeletons. After the first models were created, step-wise variable selection was used to create a multiple logistic regression model using BIC as the comparison metric. This model resulted in using T2 Horizontal, T11 Left TP Length, T5 Left TP Length, and T10 Left TP Width measurements as predictors. These measurements were then used to create a LDA model, and after checking assumptions, that had similar results to the models using PCA and data imputation. For future predictions, if data is scarce, the model using T2 Horizontal, T11 Left TP Length, T5 Left TP Length, and T10 Left TP Width measurements would be preferable in order to limit the need for data imputation. If data is not scarce, the LDA model using PCA components as predictors wouold be preferable.
+
+## Acknowledgments
+
+|       This project would not be possible without the help of Leah Fuentes. As part of her Masters' project, this data was made available for analysis and the initial problem of predicting sex of the skeletons was posed. She has also been very helpful in answering questions about the data and problem originally posed.
+
+|       The guidance of Dr. Guardiola was also instrumental in performing this analysis. The advice given made the analysis in this project easier and much more clear. His instruction throughout the semester has also been informative and provided valuable tools used in this project.
+
+## References
+
+[1], [3] - Professional, C. C. medical. (n.d.). Thoracic spine: What it is, Function & Anatomy. Cleveland Clinic. https://my.clevelandclinic.org/health/body/22460-thoracic-spine 
+
+[2] - Waxenbaum JA, Reddy V, Futterman B. Anatomy, Back, Thoracic Vertebrae. [Updated 2023 Aug 1]. In: StatPearls [Internet]. Treasure Island (FL): StatPearls Publishing; 2024 Jan-. Available from: https://www.ncbi.nlm.nih.gov/books/NBK459153/
+
+Figure 1 - Provided by Leah Fuentes
+
+
+## Appendix
+
+R Code
+
+```{r Appendix,message=FALSE,warning=FALSE,eval=FALSE,comment=''}
+# Libraries
+library(readxl)
+library(tidyverse)
+library(MVN)
+library(GGally)
+library(biotools)
+library(softImpute)
+# Load Data
+Known <- read_excel("...",sheet = "Known", col_names = TRUE)
+Known$Sex <- as.factor(Known$Sex)
+Known$Vertebrae <- as.factor(Known$Vertebrae)
+Known$Individual <- as.factor(Known$Individual)
+Unknown <- read_excel("...",sheet = "Unknown", col_names = TRUE)
+Unknown$Vertebrae <- as.factor(Unknown$Vertebrae)
+Unknown$Individual <- as.factor(Unknown$Individual)
+indiv <- read_excel("...",col_names = TRUE)
+indiv$Sex <- as.factor(indiv$Sex)
+indiv$Individual <- as.factor(indiv$Individual)
+colnames(indiv) <- make.names(colnames(indiv),unique = TRUE)
+NAs <- complete.cases(Known)
+na.known <- Known[NAs,]
+# MANOVA with Interaction
+man.fit <- manova(cbind(Horizontal,Vertical,lTPlength,
+                        lTPwidth,rTPlength,rTPwidth)~Sex*Vertebrae,data=Known)
+summary(man.fit, test = 'Wilks')
+# MANOVA without Interaction
+man.fit2 <- manova(cbind(Horizontal,Vertical,lTPlength,
+                        lTPwidth,rTPlength,rTPwidth)~Sex+Vertebrae,data=Known)
+summary(man.fit2, test = 'Wilks')
+# Data Imputation
+set.seed(1335)
+imp <- softImpute(as.matrix(indiv[-c(1,2)]))
+indiv.comp <- as.data.frame(complete(as.matrix(indiv[-c(1,2)]),imp))
+indiv.comp$Sex <- indiv$Sex
+indiv.comp$Individual <- indiv$Individual
+# Principal Component Analysis
+pc.out <- prcomp(indiv.comp[-c(73,74)],scale. = TRUE)
+pca.comp <- data.frame(pc.out$x)
+pca.comp$Sex <- indiv$Sex
+pca.comp$Individual <- indiv$Individual
+## Proportion of Variance Explained
+pve <- pc.out$sdev^2 / sum(pc.out$sdev^2)
+# Multivariate Normality Tests
+## Female
+mvn(pca.comp[8:21,1:2],
+    multivariatePlot = 'qq',mvnTest = 'mardia', univariateTest = 'SW')
+## Male
+mvn(pca.comp[22:28,1:2],
+    multivariatePlot = 'qq',mvnTest = 'mardia',univariateTest = 'SW')
+# Box M-test for Homogeneity of Covariance Matrices
+boxM(pca.comp[8:28,1:2],grouping = pca.comp[8:28,]$Sex)
+# Multiple Logistic Regression
+log.fit.pca <- glm(Sex~PC1+PC2, data = pca.comp,family = 'binomial')
+log.pred <- rep('F',28)
+log.pred[predict(log.fit.pca,newdata = pca.comp[c(1,2)], type = 'response')>0.5] <- 'M'
+log.pred <- data.frame(Individual <- pca.comp$Individual,
+                       Prediction <- log.pred)
+summary(log.fit.pca)
+table(log.pred[8:28,]$Prediction....log.pred,pca.comp[8:28,]$Sex,
+      dnn = c('Predicted','Observed'))
+# LDA
+lda.fit <- lda(Sex~PC1+PC2,data = pca.comp)
+lda.pred <- predict(lda.fit,newdata = pca.comp[c(1,2)])
+lda.pred <- data.frame(Individual <- pca.comp$Individual,
+                       Prediction <- lda.pred)
+lda.fit
+plot(lda.fit)
+table(lda.pred[8:28,]$class,pca.comp[8:28,]$Sex,
+      dnn = c('Predicted','Observed'))
+# QDA
+qda.fit <- qda(Sex~PC1+PC2,data = pca.comp)
+qda.pred <- predict(qda.fit,newdata = pca.comp[c(1,2)])
+qda.pred <- data.frame(Individual <- pca.comp$Individual,
+                       Predicted <- qda.pred)
+qda.fit
+table(qda.pred[8:28,]$class,pca.comp[8:28,]$Sex,
+      dnn = c('Predicted','Observed'))
+# Prediction Table
+unknown.pred <- data.frame(Individual = pca.comp[1:7,]$Individual,
+                           Logistic.Prediction = log.pred[1:7,]$Prediction....log.pred,
+                           LDA.Prediction = lda.pred[1:7,]$class,
+                           QDA.Prediction = qda.pred[1:7,]$class)
+unknown.pred
+```
